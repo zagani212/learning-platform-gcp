@@ -64,7 +64,13 @@ export async function requestLogin(email: string, password: string): Promise<
   }
 }
 
-const ROLES: UserRole[] = ['school_admin', 'teacher', 'teaching_assistant', 'student'];
+const ROLES: UserRole[] = [
+  'platform_master',
+  'school_admin',
+  'teacher',
+  'teaching_assistant',
+  'student',
+];
 
 export function parseUserRole(role: string): UserRole | null {
   return ROLES.includes(role as UserRole) ? (role as UserRole) : null;

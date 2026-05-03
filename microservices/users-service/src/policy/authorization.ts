@@ -1,8 +1,18 @@
 /** Roles allowed to call the tenant user directory listing. */
 
-const DIRECTORY_ROLES = new Set(['school_admin', 'teacher', 'teaching_assistant']);
+const DIRECTORY_ROLES = new Set([
+  'platform_master',
+  'school_admin',
+  'teacher',
+  'teaching_assistant',
+]);
 
-const STAFF_VIEW_ROLES = new Set(['school_admin', 'teacher', 'teaching_assistant']);
+const STAFF_VIEW_ROLES = new Set([
+  'platform_master',
+  'school_admin',
+  'teacher',
+  'teaching_assistant',
+]);
 
 export function canListUserDirectory(role: string): boolean {
   return DIRECTORY_ROLES.has(role);

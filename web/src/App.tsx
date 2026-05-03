@@ -10,9 +10,11 @@ import { TeacherHomePage } from './pages/teacher/TeacherHomePage';
 import { TeacherCourseMaterialsPage } from './pages/teacher/TeacherCourseMaterialsPage';
 import { AdminSchoolPage } from './pages/admin/AdminSchoolPage';
 import { AdminCoursesPage } from './pages/admin/AdminCoursesPage';
+import { MasterTenantsPage } from './pages/platform/MasterTenantsPage';
 import type { UserRole } from './domain/types';
 
 function RedirectByRole({ role }: { role: UserRole }) {
+  if (role === 'platform_master') return <Navigate to="/app/platform/tenants" replace />;
   if (role === 'student') return <Navigate to="/app/student" replace />;
   if (role === 'teacher' || role === 'teaching_assistant')
     return <Navigate to="/app/teacher" replace />;
@@ -90,9 +92,18 @@ export default function App() {
         />
 
         <Route
+          path="platform/tenants"
+          element={
+            <GateRole roles={['platform_master']}>
+              <MasterTenantsPage />
+            </GateRole>
+          }
+        />
+
+        <Route
           path="admin"
           element={
-            <GateRole roles={['school_admin']}>
+            <GateRole roles={['school_admin', 'platform_master']}>
               <AdminSchoolPage />
             </GateRole>
           }
@@ -100,7 +111,7 @@ export default function App() {
         <Route
           path="admin/courses"
           element={
-            <GateRole roles={['school_admin']}>
+            <GateRole roles={['school_admin', 'platform_master']}>
               <AdminCoursesPage />
             </GateRole>
           }

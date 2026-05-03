@@ -1,4 +1,5 @@
 export type UserRole =
+  | 'platform_master'
   | 'school_admin'
   | 'teacher'
   | 'student'

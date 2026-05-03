@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { Badge } from '../../components/Badge';
+import { Button } from '../../components/Button';
 import { Card } from '../../components/Card';
 import {
   fetchSchoolsDirectory,
@@ -17,6 +19,7 @@ import { usePlatform } from '../../state/PlatformContext';
 
 function roleLabelSafe(role: string): string {
   const roles: readonly UserRole[] = [
+    'platform_master',
     'school_admin',
     'teacher',
     'teaching_assistant',
@@ -27,7 +30,7 @@ function roleLabelSafe(role: string): string {
 }
 
 export function AdminSchoolPage() {
-  const { accessToken, getAuthorizationHeader, currentSchool } = usePlatform();
+  const { accessToken, getAuthorizationHeader, currentSchool, currentUser } = usePlatform();
   const [schools, setSchools] = useState<SchoolDto[]>([]);
   const [users, setUsers] = useState<UserPublicDto[]>([]);
   const [loading, setLoading] = useState(true);
@@ -66,7 +69,8 @@ export function AdminSchoolPage() {
 
       const errors: string[] = [];
       if (!sRes.ok) {
-        if (sRes.status === 403) errors.push('Schools API: forbidden (needs school_admin).');
+        if (sRes.status === 403)
+          errors.push('Schools API: forbidden (needs school_admin or platform_master).');
         else if (sRes.error === 'network_error')
           errors.push('Schools API: could not reach the server.');
         else if (sRes.status === 401 && sRes.error.startsWith('token_expired'))
@@ -112,14 +116,43 @@ export function AdminSchoolPage() {
   const schoolsBlocked = error?.includes('Schools API');
   const usersBlocked = error?.includes('Users API');
 
+  const isPlatformMaster = currentUser?.role === 'platform_master';
+
   return (
     <div className="mx-auto max-w-4xl space-y-8">
-      <div>
-        <h1 className="font-display text-2xl font-semibold text-ink-950">School directory</h1>
-        <p className="mt-2 text-sm text-ink-600">
-          Schools and members load from Cloud SQL via the schools-service and users-service APIs.
-        </p>
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <h1 className="font-display text-2xl font-semibold text-ink-950">School directory</h1>
+          <p className="mt-2 text-sm text-ink-600">
+            Schools and members load from Cloud SQL via the schools-service and users-service APIs.
+          </p>
+        </div>
+        {isPlatformMaster ?
+          <Link to="/app/platform/tenants?create=1" className="shrink-0">
+            <Button type="button" className="w-full px-6 py-3 text-base font-semibold shadow-card sm:w-auto">
+              + Create new tenant
+            </Button>
+          </Link>
+        : null}
       </div>
+
+      {currentUser?.role === 'school_admin' && !isPlatformMaster && (
+        <Card className="border-ink-100 bg-ink-50/80 py-4">
+          <p className="text-sm text-ink-800">
+            <strong>School admins</strong> manage this tenant only. Adding a{' '}
+            <strong>new school (tenant)</strong> requires a{' '}
+            <strong className="text-ink-900">Platform master</strong> account (
+            <code className="rounded bg-ink-100 px-1 py-0.5 text-xs">platform_master</code> in Postgres).
+          </p>
+          <p className="mt-2 text-xs text-ink-600">
+            Ask your DB operator to run:{' '}
+            <code className="rounded bg-white px-1 font-mono text-[11px]">
+              {'UPDATE users SET role = \'platform_master\' WHERE email = \'your@email\';'}
+            </code>{' '}
+            then sign out and sign back in — you'll see <strong>Create tenant</strong> in the sidebar.
+          </p>
+        </Card>
+      )}
 
       {error && (
         <div className="rounded-xl border border-ink-200 bg-ink-50 px-4 py-3 text-sm text-ink-800">

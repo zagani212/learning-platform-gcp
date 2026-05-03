@@ -7,6 +7,12 @@ import type { UserRole } from '../domain/types';
 
 function navForRole(role: UserRole): { to: string; label: string }[] {
   switch (role) {
+    case 'platform_master':
+      return [
+        { to: '/app/platform/tenants', label: 'Create tenant' },
+        { to: '/app/admin', label: 'School directory' },
+        { to: '/app/admin/courses', label: 'All courses' },
+      ];
     case 'student':
       return [
         { to: '/app/student', label: 'Courses' },

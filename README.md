@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS users (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   CONSTRAINT users_role_chk CHECK (
     role IN (
+      'platform_master',
       'school_admin',
       'teacher',
       'teaching_assistant',
@@ -41,13 +42,16 @@ CREATE TABLE IF NOT EXISTS users (
 CREATE INDEX IF NOT EXISTS idx_users_school_id ON users (school_id);
 ```
 
+If you deployed an older schema without **`platform_master`**, run **`microservices/auth-service/sql/002_platform_master_role.sql`** once to widen the `users.role` check constraint.
+
 ### 2. Roles
 
 Use exactly these **`role`** values (they match the web app and auth service JWT payload):
 
-| `role`               | Typical use           |
-|----------------------|-----------------------|
-| `school_admin`       | Tenant / school admin |
+| `role`               | Typical use                                    |
+|----------------------|------------------------------------------------|
+| `platform_master`    | Operators who create new tenants (school rows + first school admin via API). |
+| `school_admin`       | Tenant / school admin                           |
 | `teacher`            | Instructor            |
 | `teaching_assistant` | TA                    |
 | `student`            | Student               |
@@ -84,7 +88,7 @@ VALUES (
   'Master Admin',
   'admin@yourdomain.com',
   crypt('YOUR_STRONG_PASSWORD_HERE', gen_salt('bf')),
-  'school_admin',
+  'platform_master',
   TRUE
 )
 ON CONFLICT (email) DO NOTHING;
@@ -124,7 +128,7 @@ VALUES (
   'Master Admin',
   'admin@yourdomain.com',
   '$2a$12$...paste_full_bcrypt_hash...',
-  'school_admin',
+  'platform_master',
   TRUE
 )
 ON CONFLICT (email) DO NOTHING;
@@ -184,7 +188,8 @@ cd microservices/users-service && npm install && npm run dev
 
 Send header: **`Authorization: Bearer <access_token>`** (from **`POST /v1/auth/login`**).
 
-- **`GET /v1/schools`** — all rows from the **`schools`** table (**`school_admin` only**, ordered by name). Used by the web admin directory.
+- **`GET /v1/schools`** — all rows from the **`schools`** table (**`school_admin`** or **`platform_master`**, ordered by name).
+- **`POST /v1/schools`** — **`platform_master` only**. Body: `{ "name", "slug", "initialAdmin": { "userName", "email" } }`. Inserts the school, calls **users-service** to create the tenant’s first **`school_admin`** with a random password, and returns **`{ school, schoolAdmin: { userId, email, userName, temporaryPassword } }`**. If bootstrap fails, the school row is rolled back. Requires **`USERS_SERVICE_INTERNAL_URL`** in **`microservices/.env`** on the schools-service process.
 - **`GET /v1/schools/me`** — school row for the token’s `sid` (`school_id`).
 - **`GET /v1/schools/:schoolId`** — same as above only when `:schoolId` matches the caller’s tenant (`403` otherwise).
 
@@ -192,6 +197,7 @@ Responses use JSON shape `{ school: { schoolId, name, slug, createdAt } }`.
 
 ### `users-service` API (JWT required)
 
+- **`POST /v1/users/bootstrap-school-admin`** — **`platform_master` only** (usually called by **schools-service**, not the browser). Body: `{ schoolId, userName, email }`. Inserts a **`school_admin`** with a random bcrypt password and returns **`{ user, temporaryPassword }`** once.
 - **`GET /v1/users/me`** — public profile fields for the current user (never includes `password_hash`).
 - **`GET /v1/users`** — list users in the caller’s school. Allowed for **`school_admin`**, **`teacher`**, **`teaching_assistant`** only (`403` for **`student`**).
 - **`GET /v1/users/:userId`** — profile if the subject is in the same school **and** the caller may see it (**self**, or **`school_admin` / `teacher` / `teaching_assistant`**). Otherwise **`403`** / **`404`**.

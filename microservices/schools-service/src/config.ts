@@ -48,6 +48,9 @@ const envSchema = z.object({
 
   DATABASE_POOL_MAX: z.coerce.number().int().positive().default(10),
 
+  /** Base URL of users-service (server-to-server bootstrap). Example: http://localhost:8082 */
+  USERS_SERVICE_INTERNAL_URL: z.string().min(1).default('http://localhost:8082'),
+
   CORS_ORIGIN: z.string().default('*'),
 });
 

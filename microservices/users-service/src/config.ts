@@ -32,6 +32,8 @@ const envSchema = z.object({
 
   JWT_SECRET: z.string().trim().min(16, 'JWT_SECRET must be at least 16 characters'),
 
+  BCRYPT_ROUNDS: z.coerce.number().int().min(4).max(16).default(12),
+
   DATABASE_HOST: z.string().default('127.0.0.1'),
   DATABASE_PORT: z.coerce.number().int().positive().default(5432),
   DATABASE_NAME: z.string().min(1),
