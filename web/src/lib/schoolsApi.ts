@@ -29,10 +29,10 @@ export async function fetchSchoolsDirectory(
     });
     const data: unknown = await res.json().catch(() => ({}));
     if (!res.ok) {
-      const err =
-        typeof data === 'object' && data !== null && 'error' in data
-          ? String((data as { error: unknown }).error)
-          : 'request_failed';
+      const o = data as { error?: unknown; detail?: unknown };
+      const code = o.error != null ? String(o.error) : 'request_failed';
+      const detail = o.detail != null ? String(o.detail) : '';
+      const err = detail ? `${code} — ${detail}` : code;
       return { ok: false, status: res.status, error: err };
     }
     const schools = (data as { schools?: SchoolDto[] }).schools;

@@ -59,6 +59,7 @@ export class AuthService {
       },
       config.JWT_SECRET,
       {
+        algorithm: 'HS256',
         expiresIn: config.JWT_EXPIRES_IN,
         subject: user.userId,
         jwtid: randomUUID(),

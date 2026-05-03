@@ -16,8 +16,8 @@ import { z } from 'zod';
   const serviceRoot = resolve(srcDir, '..', '..');
   const msRoot = resolve(serviceRoot, '..');
   const shared = resolve(msRoot, '.env');
-  if (existsSync(shared)) loadDotenv({ path: shared });
-  else loadDotenv({ path: resolve(serviceRoot, '.env') });
+  if (existsSync(shared)) loadDotenv({ path: shared, override: true });
+  else loadDotenv({ path: resolve(serviceRoot, '.env'), override: true });
 }
 
 const rounds = z.coerce

@@ -161,6 +161,8 @@ Put secrets in **one file** at **`microservices/.env`** (template: **`microservi
 
 If **`microservices/.env`** is missing, each service falls back to its legacy **`<service>/.env`**.
 
+**Troubleshooting `invalid_token` on schools/users:** All three services must use the **exact same `JWT_SECRET`**. By default, **`dotenv` does not override variables already set in your shell**; this repo loads **`microservices/.env` with `override: true`** so the file wins. After changing **`JWT_SECRET`**, restart **auth-service**, **schools-service**, and **users-service**, then sign in again to get a fresh token.
+
 | Service | Default port (env key) | Base path |
 |---------|-------------------------|-----------|
 | `auth-service` | `8080` (`AUTH_SERVICE_PORT`) | `/v1/auth`, `/health`, `/health/db` |

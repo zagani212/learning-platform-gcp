@@ -29,7 +29,9 @@ export function requireAuth(req: Request, res: Response, next: NextFunction): vo
     return;
   }
   try {
-    const payload = jwt.verify(token, config.JWT_SECRET) as jwt.JwtPayload & {
+    const payload = jwt.verify(token, config.JWT_SECRET, {
+      algorithms: ['HS256'],
+    }) as jwt.JwtPayload & {
       uid?: string;
       sid?: string;
       role?: string;
@@ -39,12 +41,24 @@ export function requireAuth(req: Request, res: Response, next: NextFunction): vo
     const schoolId = typeof payload.sid === 'string' ? payload.sid : undefined;
     const role = typeof payload.role === 'string' ? payload.role : undefined;
     if (!userId || !schoolId || !role) {
-      res.status(401).json({ error: 'invalid_token' });
+      res.status(401).json({ error: 'invalid_token', reason: 'missing_claims' });
       return;
     }
     req.auth = { userId, schoolId, role };
     next();
-  } catch {
+  } catch (e) {
+    if (e instanceof jwt.TokenExpiredError) {
+      res.status(401).json({ error: 'token_expired' });
+      return;
+    }
+    if (e instanceof jwt.JsonWebTokenError) {
+      res.status(401).json({
+        error: 'invalid_token',
+        reason: 'verify_failed',
+        ...(config.NODE_ENV === 'development' ? { detail: e.message } : {}),
+      });
+      return;
+    }
     res.status(401).json({ error: 'invalid_token' });
   }
 }

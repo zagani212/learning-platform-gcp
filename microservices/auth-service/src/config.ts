@@ -11,12 +11,13 @@ function loadMicroservicesEnv(importMetaUrl: string): void {
   const microservicesRoot = resolve(serviceRoot, '..');
   const shared = resolve(microservicesRoot, '.env');
   if (existsSync(shared)) {
-    loadDotenv({ path: shared });
+    // File must win over shell-inherited vars so all services share the same JWT_SECRET, etc.
+    loadDotenv({ path: shared, override: true });
     return;
   }
   const legacy = resolve(serviceRoot, '.env');
   if (existsSync(legacy)) {
-    loadDotenv({ path: legacy });
+    loadDotenv({ path: legacy, override: true });
   }
 }
 
@@ -30,7 +31,7 @@ const envSchema = z.object({
   PORT: z.coerce.number().int().positive().default(8080),
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
 
-  JWT_SECRET: z.string().min(16, 'JWT_SECRET must be at least 16 characters'),
+  JWT_SECRET: z.string().trim().min(16, 'JWT_SECRET must be at least 16 characters'),
   JWT_EXPIRES_IN: z.string().default('15m'),
 
   BCRYPT_ROUNDS: z.coerce.number().int().min(4).max(16).default(12),

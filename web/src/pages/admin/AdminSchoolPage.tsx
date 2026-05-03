@@ -69,6 +69,12 @@ export function AdminSchoolPage() {
         if (sRes.status === 403) errors.push('Schools API: forbidden (needs school_admin).');
         else if (sRes.error === 'network_error')
           errors.push('Schools API: could not reach the server.');
+        else if (sRes.status === 401 && sRes.error.startsWith('token_expired'))
+          errors.push('Schools API: session expired — sign out and sign in again.');
+        else if (sRes.status === 401 && sRes.error.includes('invalid_token'))
+          errors.push(
+            `Schools API: ${sRes.error} (ensure microservices/.env JWT_SECRET matches across auth, schools, and users; restart all three after changing it).`,
+          );
         else errors.push(`Schools API: ${sRes.error}`);
         setSchools([]);
       } else {
@@ -79,6 +85,12 @@ export function AdminSchoolPage() {
         if (uRes.status === 403) errors.push('Users API: forbidden.');
         else if (uRes.error === 'network_error')
           errors.push('Users API: could not reach the server.');
+        else if (uRes.status === 401 && uRes.error.startsWith('token_expired'))
+          errors.push('Users API: session expired — sign out and sign in again.');
+        else if (uRes.status === 401 && uRes.error.includes('invalid_token'))
+          errors.push(
+            `Users API: ${uRes.error} (ensure microservices/.env JWT_SECRET matches; restart all services).`,
+          );
         else errors.push(`Users API: ${uRes.error}`);
         setUsers([]);
       } else {
