@@ -1,7 +1,9 @@
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Button } from '../../components/Button';
 import { Card } from '../../components/Card';
 import type { CourseAsset } from '../../domain/types';
+import { openCourseAssetInNewTab } from '../../lib/mediaApi';
 import { usePlatform } from '../../state/PlatformContext';
 
 export function StudentFollowingPage() {
@@ -72,33 +74,39 @@ export function StudentFollowingPage() {
 }
 
 function AssetOpenButton({ asset }: { asset: CourseAsset }) {
-  if (asset.kind === 'video') {
+  const { getAuthorizationHeader } = usePlatform();
+  const [err, setErr] = useState<string | null>(null);
+
+  const label =
+    asset.kind === 'link' ? 'Visit link'
+    : asset.kind === 'video' ? 'Open video'
+    : asset.kind === 'image' ? 'Open image'
+    : asset.kind === 'pdf' || asset.kind === 'document' ? 'Open file'
+    : asset.kind === 'audio' ? 'Open audio'
+    : 'Open';
+
+  if (asset.kind === 'link' && !asset.gcsObjectKey) {
     return (
-      <a
-        href={asset.url}
-        target="_blank"
-        rel="noreferrer"
-        className="text-sm font-medium text-accent-dark hover:underline"
-      >
-        Open video
+      <a href={asset.url} target="_blank" rel="noreferrer" className="text-sm font-medium text-accent-dark hover:underline">
+        {label}
       </a>
     );
   }
-  if (asset.kind === 'pdf' || asset.kind === 'document') {
-    return (
-      <a
-        href={asset.url}
-        target="_blank"
-        rel="noreferrer"
-        className="text-sm font-medium text-accent-dark hover:underline"
-      >
-        Open file
-      </a>
-    );
-  }
+
   return (
-    <a href={asset.url} target="_blank" rel="noreferrer" className="text-sm font-medium text-accent-dark hover:underline">
-      Visit link
-    </a>
+    <div className="flex flex-col items-end gap-1">
+      <button
+        type="button"
+        className="text-sm font-medium text-accent-dark hover:underline"
+        onClick={async () => {
+          setErr(null);
+          const r = await openCourseAssetInNewTab(asset, getAuthorizationHeader);
+          if (!r.ok) setErr(r.message);
+        }}
+      >
+        {label}
+      </button>
+      {err && <span className="max-w-[14rem] text-right text-xs text-red-700">{err}</span>}
+    </div>
   );
 }

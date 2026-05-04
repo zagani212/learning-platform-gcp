@@ -39,7 +39,15 @@ function loadSnapshot(): PlatformSnapshot {
         Array.isArray(parsed.assets) &&
         Array.isArray(parsed.enrollments)
       ) {
-        return parsed;
+        return {
+          ...parsed,
+          assets: parsed.assets.filter(
+            (a) =>
+              a.kind === 'link' ||
+              Boolean(a.gcsObjectKey) ||
+              (typeof a.url === 'string' && a.url.length > 0 && !a.url.startsWith('blob:')),
+          ),
+        };
       }
     }
   } catch {
@@ -89,14 +97,6 @@ function ensureSchoolSlug(schoolId: string): string {
   return `school-${compact.slice(0, 16)}`;
 }
 
-function guessAssetKind(file: File): AssetKind {
-  const t = file.type;
-  if (t === 'application/pdf') return 'pdf';
-  if (t.startsWith('video/')) return 'video';
-  if (t.startsWith('audio/')) return 'audio';
-  return 'document';
-}
-
 export interface LoginFailure {
   ok: false;
   error: string;
@@ -126,15 +126,16 @@ export interface PlatformContextValue {
   enroll: (courseId: string) => void;
   unenroll: (courseId: string) => void;
   createCourse: (input: { title: string; description: string }) => void;
-  addAssetToCourse: (courseId: string, file: File) => void;
+  /** After a successful PUT to the signed upload URL, persist metadata in the local snapshot. */
+  registerCloudAsset: (
+    courseId: string,
+    input: { objectKey: string; title: string; fileName: string; kind: AssetKind },
+  ) => void;
   addLinkAsset: (courseId: string, title: string, url: string) => void;
   assetsForCourse: (courseId: string) => CourseAsset[];
-  revokeObjectUrls: () => void;
 }
 
 const PlatformContext = createContext<PlatformContextValue | null>(null);
-
-const objectUrls = new Set<string>();
 
 export function PlatformProvider({ children }: { children: ReactNode }) {
   const [snapshot, setSnapshot] = useState<PlatformSnapshot>(() => loadSnapshot());
@@ -209,8 +210,6 @@ export function PlatformProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const resetLocalData = useCallback(() => {
-    objectUrls.forEach((u) => URL.revokeObjectURL(u));
-    objectUrls.clear();
     const empty = emptyPlatformSnapshot();
     setSnapshot(empty);
     saveSnapshot(empty);
@@ -318,8 +317,11 @@ export function PlatformProvider({ children }: { children: ReactNode }) {
     [currentUser, currentSchool, update],
   );
 
-  const addAssetToCourse = useCallback(
-    (courseId: string, file: File) => {
+  const registerCloudAsset = useCallback(
+    (
+      courseId: string,
+      input: { objectKey: string; title: string; fileName: string; kind: AssetKind },
+    ) => {
       if (!currentUser || !currentSchool) return;
       const course = snapshot.courses.find((c) => c.id === courseId);
       if (!course || course.schoolId !== currentSchool.id) return;
@@ -328,16 +330,14 @@ export function PlatformProvider({ children }: { children: ReactNode }) {
         (currentUser.role === 'teacher' && course.teacherId === currentUser.id) ||
         currentUser.role === 'teaching_assistant';
       if (!canEdit) return;
-      const url = URL.createObjectURL(file);
-      objectUrls.add(url);
-      const id = crypto.randomUUID();
       const asset: CourseAsset = {
-        id,
+        id: crypto.randomUUID(),
         courseId,
-        kind: guessAssetKind(file),
-        title: file.name.replace(/\.[^.]+$/, '') || file.name,
-        url,
-        fileName: file.name,
+        kind: input.kind,
+        title: input.title,
+        url: '',
+        gcsObjectKey: input.objectKey,
+        fileName: input.fileName,
         createdAt: new Date().toISOString(),
       };
       update((prev) => ({ ...prev, assets: [...prev.assets, asset] }));
@@ -377,11 +377,6 @@ export function PlatformProvider({ children }: { children: ReactNode }) {
     [snapshot.assets],
   );
 
-  const revokeObjectUrls = useCallback(() => {
-    objectUrls.forEach((u) => URL.revokeObjectURL(u));
-    objectUrls.clear();
-  }, []);
-
   const value = useMemo<PlatformContextValue>(
     () => ({
       snapshot,
@@ -401,10 +396,9 @@ export function PlatformProvider({ children }: { children: ReactNode }) {
       enroll,
       unenroll,
       createCourse,
-      addAssetToCourse,
+      registerCloudAsset,
       addLinkAsset,
       assetsForCourse,
-      revokeObjectUrls,
     }),
     [
       snapshot,
@@ -423,10 +417,9 @@ export function PlatformProvider({ children }: { children: ReactNode }) {
       enroll,
       unenroll,
       createCourse,
-      addAssetToCourse,
+      registerCloudAsset,
       addLinkAsset,
       assetsForCourse,
-      revokeObjectUrls,
     ],
   );
 

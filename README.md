@@ -162,6 +162,7 @@ Put secrets in **one file** at **`microservices/.env`** (template: **`microservi
 
 - **`AUTH_SERVICE_PORT`**, **`SCHOOLS_SERVICE_PORT`**, **`USERS_SERVICE_PORT`** — required in the shared file so every process gets its own port without clashing.
 - **`JWT_SECRET`**, **`DATABASE_*`**, **`CORS_ORIGIN`**, plus **`JWT_EXPIRES_IN`** / **`BCRYPT_ROUNDS`** for auth.
+- For **media-service**: **`GCS_MEDIA_BUCKET`**, **`GCS_TENANT_PREFIX`**, **`MEDIA_SIGNED_URL_TTL_SECONDS`**, **`MEDIA_SERVICE_PORT`**.
 
 If **`microservices/.env`** is missing, each service falls back to its legacy **`<service>/.env`**.
 
@@ -172,8 +173,9 @@ If **`microservices/.env`** is missing, each service falls back to its legacy **
 | `auth-service` | `8080` (`AUTH_SERVICE_PORT`) | `/v1/auth`, `/health`, `/health/db` |
 | `schools-service` | `8081` (`SCHOOLS_SERVICE_PORT`) | `/v1/schools`, `/health`, `/health/db` |
 | `users-service` | `8082` (`USERS_SERVICE_PORT`) | `/v1/users`, `/health`, `/health/db` |
+| `media-service` | `8083` (`MEDIA_SERVICE_PORT`) | `/v1/media`, `/health` |
 
-Run locally (three terminals):
+Run locally (one terminal per service you need):
 
 ```bash
 cp microservices/.env.example microservices/.env
@@ -182,6 +184,8 @@ cp microservices/.env.example microservices/.env
 cd microservices/auth-service && npm install && npm run dev
 cd microservices/schools-service && npm install && npm run dev
 cd microservices/users-service && npm install && npm run dev
+# optional — Google Cloud Storage signed URLs (see below)
+cd microservices/media-service && npm install && npm run dev
 ```
 
 ### `schools-service` API (JWT required)
@@ -199,12 +203,38 @@ Responses use JSON shape `{ school: { schoolId, name, slug, createdAt } }`.
 
 - **`POST /v1/users/bootstrap-school-admin`** — **`platform_master` only** (usually called by **schools-service**, not the browser). Body: `{ schoolId, userName, email }`. Inserts a **`school_admin`** with a random bcrypt password and returns **`{ user, temporaryPassword }`** once.
 - **`GET /v1/users/me`** — public profile fields for the current user (never includes `password_hash`).
-- **`GET /v1/users`** — list users in the caller’s school. Allowed for **`school_admin`**, **`teacher`**, **`teaching_assistant`** only (`403` for **`student`**).
+- **`GET /v1/users`** — list users in the caller’s school. Allowed for **`school_admin`**, **`platform_master`**, **`teacher`**, **`teaching_assistant`** (`403` for **`student`**).
 - **`GET /v1/users/:userId`** — profile if the subject is in the same school **and** the caller may see it (**self**, or **`school_admin` / `teacher` / `teaching_assistant`**). Otherwise **`403`** / **`404`**.
 
 Responses use **`{ user: { userId, schoolId, userName, email, role, active, createdAt } }`** or **`{ users: [...] }`**.
 
-Example (after login):
+### `media-service` (JWT required) — tenant media on GCS
+
+Configure **`GCS_MEDIA_BUCKET`** (and optionally **`GCS_TENANT_PREFIX`**, default `tenants`) in **`microservices/.env`**. The process must run with credentials that can **sign URLs** and **read/write objects** (for example a service account with **Storage Object Admin** on that bucket, or tighter custom roles including `storage.objects.create` / `get` / `signBlob` as required by your org).
+
+**Signing locally:** Plain **`gcloud auth application-default login`** (user ADC only) cannot sign V4 URLs. Use either **`GOOGLE_APPLICATION_CREDENTIALS`** pointing at a **service account JSON key**, or **impersonation**: set **`GCS_IMPERSONATE_SERVICE_ACCOUNT`** to the target SA email (e.g. `learning-platform-service-account@PROJECT.iam.gserviceaccount.com`) or the short account id plus **`GCP_PROJECT_ID`** / **`GOOGLE_CLOUD_PROJECT`**. Your user must have **Service Account Token Creator** (`roles/iam.serviceAccountTokenCreator`) on that service account. On **Cloud Run** / **GKE**, attach a workload service account and leave impersonation unset.
+
+Object layout: **`{GCS_TENANT_PREFIX}/{school_id}/media/{user_id}/{uuid}-{filename}`** — the JWT claim **`sid`** must match **`school_id`** for upload and read.
+
+- **`POST /v1/media/signed-upload`** — **`teacher`** or **`teaching_assistant`** only. Body: `{ "fileName", "contentType" }` with an allowed MIME type: common **images** (JPEG, PNG, GIF, WebP), **video** (MP4, WebM, QuickTime), **PDF**, **audio** (MPEG, WAV, WebM, MP4), and **Word/PowerPoint** (legacy and Open XML). Returns **`{ uploadUrl, objectKey, method: "PUT", headers: { "Content-Type": … }, expiresAt }`**. The browser should **`PUT`** the raw file bytes to **`uploadUrl`** with exactly that **`Content-Type`** header.
+- **`POST /v1/media/signed-read`** — any signed-in role in the same tenant (**`student`**, **`teacher`**, **`teaching_assistant`**, **`school_admin`**, **`platform_master`**). Body: `{ "objectKey" }` must start with **`{GCS_TENANT_PREFIX}/{caller sid}/`**. Returns **`{ readUrl, expiresAt }`**.
+
+**Bucket CORS (browser uploads):** allow **`PUT`** from your SPA origin (for example `http://localhost:5173`) and the response headers your client needs. Example (adjust origin and `maxAgeSeconds`):
+
+```json
+[
+  {
+    "origin": ["http://localhost:5173"],
+    "method": ["PUT", "GET", "HEAD", "OPTIONS"],
+    "responseHeader": ["Content-Type", "Access-Control-Allow-Origin"],
+    "maxAgeSeconds": 3600
+  }
+]
+```
+
+The web app reads **`VITE_MEDIA_API_URL`** (see **`web/.env.example`**). Teacher **file** uploads require it; **links** still work without it.
+
+### Example `curl` calls (after login)
 
 ```bash
 TOKEN='<paste accessToken>'
@@ -214,6 +244,10 @@ curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8081/v1/schools/me | 
 curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8082/v1/users/me | jq .
 
 curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8082/v1/users | jq .
+
+curl -s -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"fileName":"clip.mp4","contentType":"video/mp4"}' \
+  http://localhost:8083/v1/media/signed-upload | jq .
 ```
 
 ## Repository layout
@@ -224,4 +258,5 @@ curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8082/v1/users | jq .
 | `microservices/auth-service/` | Login JWT + Postgres |
 | `microservices/schools-service/` | School metadata reads (tenant scoped) |
 | `microservices/users-service/` | User directory + profile reads (tenant scoped, role aware) |
+| `microservices/media-service/` | Signed upload/read URLs for tenant-scoped objects in GCS |
 | `microservices/auth-service/sql/` | SQL migrations / reference scripts |

@@ -19,15 +19,17 @@ export interface User {
   role: UserRole;
 }
 
-export type AssetKind = 'pdf' | 'video' | 'document' | 'link' | 'audio';
+export type AssetKind = 'pdf' | 'video' | 'document' | 'link' | 'audio' | 'image';
 
 export interface CourseAsset {
   id: string;
   courseId: string;
   kind: AssetKind;
   title: string;
-  /** object URL for uploaded files, or href for links */
+  /** External href for links, or empty when the file lives in GCS (`gcsObjectKey`) */
   url: string;
+  /** GCS object key under the signed-URL flow (tenant-prefixed on the server). */
+  gcsObjectKey?: string;
   /** original file name when applicable */
   fileName?: string;
   createdAt: string;
