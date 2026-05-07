@@ -12,6 +12,7 @@ function navForRole(role: UserRole): { to: string; label: string }[] {
         { to: '/app/platform/tenants', label: 'Create tenant' },
         { to: '/app/admin', label: 'School directory' },
         { to: '/app/admin/courses', label: 'All courses' },
+        { to: '/app/teacher', label: 'Courses (manage)' },
       ];
     case 'student':
       return [

@@ -1,0 +1,70 @@
+name: learning-platform
+
+services:
+  auth-service:
+    build: ./microservices/auth-service
+    env_file:
+      - ./microservices/.env
+    environment:
+      AUTH_SERVICE_PORT: "8080"
+      PORT: "8080"
+    expose:
+      - "8080"
+
+  users-service:
+    build: ./microservices/users-service
+    env_file:
+      - ./microservices/.env
+    environment:
+      USERS_SERVICE_PORT: "8082"
+      PORT: "8082"
+    expose:
+      - "8082"
+
+  schools-service:
+    build: ./microservices/schools-service
+    env_file:
+      - ./microservices/.env
+    environment:
+      SCHOOLS_SERVICE_PORT: "8081"
+      PORT: "8081"
+      USERS_SERVICE_INTERNAL_URL: http://users-service:8082
+    depends_on:
+      - users-service
+    expose:
+      - "8081"
+
+  media-service:
+    build: ./microservices/media-service
+    env_file:
+      - ./microservices/.env
+    environment:
+      MEDIA_SERVICE_PORT: "8083"
+      PORT: "8083"
+    expose:
+      - "8083"
+
+  web:
+    build:
+      context: ./web
+      args:
+        VITE_AUTH_API_URL: ${VITE_AUTH_API_URL}
+        VITE_SCHOOLS_API_URL: ${VITE_SCHOOLS_API_URL}
+        VITE_USERS_API_URL: ${VITE_USERS_API_URL}
+        VITE_MEDIA_API_URL: ${VITE_MEDIA_API_URL}
+    expose:
+      - "80"
+
+  caddy:
+    image: caddy:2.8-alpine
+    depends_on:
+      - web
+      - auth-service
+      - schools-service
+      - users-service
+      - media-service
+    ports:
+      - "80:80"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+

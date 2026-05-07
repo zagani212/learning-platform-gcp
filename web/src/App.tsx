@@ -77,7 +77,7 @@ export default function App() {
         <Route
           path="teacher"
           element={
-            <GateRole roles={['teacher', 'teaching_assistant']}>
+            <GateRole roles={['teacher', 'teaching_assistant', 'platform_master']}>
               <TeacherHomePage />
             </GateRole>
           }
@@ -85,7 +85,7 @@ export default function App() {
         <Route
           path="teacher/course/:courseId"
           element={
-            <GateRole roles={['teacher', 'teaching_assistant']}>
+            <GateRole roles={['teacher', 'teaching_assistant', 'platform_master']}>
               <TeacherCourseMaterialsPage />
             </GateRole>
           }

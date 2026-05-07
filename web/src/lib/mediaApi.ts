@@ -43,6 +43,35 @@ export type SignedReadResponse = {
   expiresAt: string;
 };
 
+export type DirectUploadResponse = {
+  objectKey: string;
+  url: string;
+};
+
+export async function uploadDirect(
+  auth: Record<string, string>,
+  file: File,
+): Promise<{ ok: true; data: DirectUploadResponse } | { ok: false; status: number; error: string }> {
+  const base = getMediaApiBase();
+  if (!base) return { ok: false, status: 0, error: 'media_api_not_configured' };
+
+  const form = new FormData();
+  form.append('file', file, file.name);
+
+  const res = await fetch(`${base}/v1/media/upload`, {
+    method: 'POST',
+    headers: { ...auth },
+    body: form,
+  });
+
+  const data = (await res.json().catch(() => ({}))) as { error?: string } & Partial<DirectUploadResponse>;
+  if (!res.ok) {
+    return { ok: false, status: res.status, error: typeof data.error === 'string' ? data.error : 'request_failed' };
+  }
+  if (!data.objectKey || !data.url) return { ok: false, status: 502, error: 'malformed_response' };
+  return { ok: true, data: { objectKey: data.objectKey, url: data.url } };
+}
+
 export async function requestSignedUpload(
   auth: Record<string, string>,
   body: { fileName: string; contentType: string },
@@ -97,18 +126,6 @@ export async function openCourseAssetInNewTab(
   asset: Pick<CourseAsset, 'url' | 'gcsObjectKey'>,
   getAuthorizationHeader: () => Record<string, string> | undefined,
 ): Promise<{ ok: true } | { ok: false; message: string }> {
-  if (asset.gcsObjectKey) {
-    const h = getAuthorizationHeader();
-    if (!h) return { ok: false, message: 'You need to be signed in to open this file.' };
-    const r = await requestSignedRead(h, asset.gcsObjectKey);
-    if (!r.ok) {
-      const msg =
-        r.status === 403 ? 'You are not allowed to open this file.' : `Could not open file (${r.error}).`;
-      return { ok: false, message: msg };
-    }
-    window.open(r.readUrl, '_blank', 'noopener,noreferrer');
-    return { ok: true };
-  }
   if (!asset.url) return { ok: false, message: 'Missing file URL.' };
   window.open(asset.url, '_blank', 'noopener,noreferrer');
   return { ok: true };

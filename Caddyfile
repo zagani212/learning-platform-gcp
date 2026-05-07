@@ -1,0 +1,28 @@
+:80 {
+  encode zstd gzip
+
+  @api path /api/*
+  handle @api {
+    uri strip_prefix /api
+
+    handle_path /auth/* {
+      reverse_proxy auth-service:8080
+    }
+    handle_path /schools/* {
+      reverse_proxy schools-service:8081
+    }
+    handle_path /users/* {
+      reverse_proxy users-service:8082
+    }
+    handle_path /media/* {
+      reverse_proxy media-service:8083
+    }
+
+    respond 404
+  }
+
+  handle {
+    reverse_proxy web:80
+  }
+}
+

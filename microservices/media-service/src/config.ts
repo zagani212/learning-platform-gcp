@@ -31,25 +31,23 @@ const envSchema = z.object({
 
   JWT_SECRET: z.string().trim().min(16, 'JWT_SECRET must be at least 16 characters'),
 
-  /** Bucket for tenant media (no gs:// prefix). */
-  GCS_MEDIA_BUCKET: z.string().trim().min(1),
+  AWS_REGION: z.string().trim().min(1),
+
+  /** Bucket for tenant media (no s3:// prefix). */
+  S3_MEDIA_BUCKET: z.string().trim().min(1),
+
+  /**
+   * Optional base URL for public object access (no trailing slash).
+   * If empty, defaults to `https://{bucket}.s3.{region}.amazonaws.com`.
+   */
+  S3_PUBLIC_BASE_URL: z.string().trim().optional().default(''),
 
   /** Logical prefix inside the bucket; objects live under `${prefix}/${schoolId}/…`. */
-  GCS_TENANT_PREFIX: z.string().trim().default('tenants'),
+  S3_TENANT_PREFIX: z.string().trim().default('tenants'),
 
   MEDIA_SIGNED_URL_TTL_SECONDS: z.coerce.number().int().positive().max(24 * 3600).default(3600),
 
   CORS_ORIGIN: z.string().default('*'),
-
-  /**
-   * Optional: impersonate this service account for Storage + V4 signing (IAM SignBlob).
-   * Use full `...@PROJECT_ID.iam.gserviceaccount.com`, or short id with GCP_PROJECT_ID / GOOGLE_CLOUD_PROJECT.
-   * Your ADC principal needs roles/iam.serviceAccountTokenCreator on this SA.
-   */
-  GCS_IMPERSONATE_SERVICE_ACCOUNT: z.string().optional().default(''),
-
-  /** GCP project id (used when GCS_IMPERSONATE_SERVICE_ACCOUNT has no `@`). */
-  GCP_PROJECT_ID: z.string().optional().default(''),
 });
 
 const parsed = envSchema.safeParse(process.env);

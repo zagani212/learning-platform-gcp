@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import multer from 'multer';
 import { z } from 'zod';
 import { config } from '../config.js';
 import { requireAuth } from '../middleware/requireAuth.js';
@@ -6,10 +7,19 @@ import {
   canRequestRead,
   canRequestUpload,
   objectKeyBelongsToSchool,
+  publicObjectUrl,
   signReadUrl,
   signUploadUrl,
-} from '../services/gcsMedia.service.js';
-import { isImpersonationPrincipalNotFound, isMissingServiceAccountForSigning } from '../util/signingErrors.js';
+  uploadObjectDirect,
+} from '../services/s3Media.service.js';
+import { isMissingAwsCredentials } from '../util/signingErrors.js';
+
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 25 * 1024 * 1024,
+  },
+});
 
 const signedUploadBody = z.object({
   fileName: z.string().trim().min(1).max(500),
@@ -24,6 +34,52 @@ export function mediaRouter() {
   const r = Router();
   r.use(requireAuth);
 
+  // One-step upload for local testing (Postman/curl). Browser flow should use presigned URLs instead.
+  r.post('/upload', upload.single('file'), async (req, res) => {
+    try {
+      const auth = req.auth!;
+      if (!canRequestUpload(auth.role)) {
+        res.status(403).json({ error: 'forbidden' });
+        return;
+      }
+      const f = req.file;
+      if (!f || !Buffer.isBuffer(f.buffer)) {
+        res.status(400).json({ error: 'missing_file', hint: 'Send multipart/form-data with field name "file".' });
+        return;
+      }
+      if (!f.mimetype) {
+        res.status(400).json({ error: 'missing_content_type' });
+        return;
+      }
+      const out = await uploadObjectDirect({
+        schoolId: auth.schoolId,
+        userId: auth.userId,
+        fileName: f.originalname || 'file',
+        contentType: f.mimetype,
+        bytes: f.buffer,
+      });
+      res.status(201).json({ objectKey: out.objectKey, url: publicObjectUrl(out.objectKey) });
+    } catch (e: unknown) {
+      const err = e as { code?: string; message?: string };
+      if (err?.code === 'UNSUPPORTED_TYPE') {
+        res.status(400).json({ error: 'unsupported_content_type' });
+        return;
+      }
+      if (isMissingAwsCredentials(e)) {
+        res.status(503).json({
+          error: 'signing_credentials',
+          hint:
+            'Direct S3 uploads require AWS credentials too. On AWS, attach an IAM role (instance profile / task role); locally, set AWS_PROFILE or AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY (and AWS_REGION).',
+          ...(config.NODE_ENV === 'development' ? { detail: (e as Error).message } : {}),
+        });
+        return;
+      }
+      console.error(e);
+      res.status(503).json({ error: 'service_unavailable' });
+    }
+  });
+
+  // Deprecated: presigned URL flow (kept for later re-enable)
   r.post('/signed-upload', async (req, res) => {
     try {
       const auth = req.auth!;
@@ -56,20 +112,11 @@ export function mediaRouter() {
         res.status(400).json({ error: 'unsupported_content_type' });
         return;
       }
-      if (isImpersonationPrincipalNotFound(e)) {
-        res.status(503).json({
-          error: 'impersonation_principal_not_found',
-          hint:
-            'Google does not recognize that service account email. In Console → IAM → Service Accounts, open the account and copy the Email exactly (character-for-character). The part before @ must match the account id; the part after @ must be YOUR_PROJECT_ID.iam.gserviceaccount.com where PROJECT_ID is from Project settings → Project ID (not the display name).',
-          ...(config.NODE_ENV === 'development' ? { detail: (e as Error).message } : {}),
-        });
-        return;
-      }
-      if (isMissingServiceAccountForSigning(e)) {
+      if (isMissingAwsCredentials(e)) {
         res.status(503).json({
           error: 'signing_credentials',
           hint:
-            'V4 signed URLs need either (1) GOOGLE_APPLICATION_CREDENTIALS pointing at a service account JSON key, or (2) ADC plus GCS_IMPERSONATE_SERVICE_ACCOUNT (your user needs roles/iam.serviceAccountTokenCreator on that SA), or (3) a workload service account on GCP. Plain application-default user login cannot sign.',
+            'S3 presigned URLs require AWS credentials. On AWS, attach an IAM role (instance profile / task role) to the compute runtime; locally, set AWS_PROFILE or AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY (and AWS_REGION).',
           ...(config.NODE_ENV === 'development' ? { detail: (e as Error).message } : {}),
         });
         return;
@@ -79,6 +126,7 @@ export function mediaRouter() {
     }
   });
 
+  // Deprecated: presigned URL flow (kept for later re-enable)
   r.post('/signed-read', async (req, res) => {
     try {
       const auth = req.auth!;
@@ -99,20 +147,11 @@ export function mediaRouter() {
       const out = await signReadUrl(objectKey);
       res.json({ readUrl: out.readUrl, expiresAt: out.expiresAt });
     } catch (e) {
-      if (isImpersonationPrincipalNotFound(e)) {
-        res.status(503).json({
-          error: 'impersonation_principal_not_found',
-          hint:
-            'Google does not recognize that service account email. In Console → IAM → Service Accounts, open the account and copy the Email exactly (character-for-character). The part before @ must match the account id; the part after @ must be YOUR_PROJECT_ID.iam.gserviceaccount.com where PROJECT_ID is from Project settings → Project ID (not the display name).',
-          ...(config.NODE_ENV === 'development' ? { detail: (e as Error).message } : {}),
-        });
-        return;
-      }
-      if (isMissingServiceAccountForSigning(e)) {
+      if (isMissingAwsCredentials(e)) {
         res.status(503).json({
           error: 'signing_credentials',
           hint:
-            'V4 signed URLs need either (1) GOOGLE_APPLICATION_CREDENTIALS pointing at a service account JSON key, or (2) ADC plus GCS_IMPERSONATE_SERVICE_ACCOUNT (your user needs roles/iam.serviceAccountTokenCreator on that SA), or (3) a workload service account on GCP. Plain application-default user login cannot sign.',
+            'S3 presigned URLs require AWS credentials. On AWS, attach an IAM role (instance profile / task role) to the compute runtime; locally, set AWS_PROFILE or AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY (and AWS_REGION).',
           ...(config.NODE_ENV === 'development' ? { detail: (e as Error).message } : {}),
         });
         return;

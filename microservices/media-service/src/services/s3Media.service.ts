@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
+import { GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { config } from '../config.js';
-import { getStorage } from './gcsStorageClient.js';
+import { getS3Client } from './s3Client.js';
 
 const UPLOAD_ROLES = new Set(['platform_master', 'teacher', 'teaching_assistant']);
 
@@ -32,7 +34,7 @@ const ALLOWED_UPLOAD_TYPES = new Set([
 ]);
 
 function tenantRoot(schoolId: string): string {
-  const p = config.GCS_TENANT_PREFIX.replace(/^\/+|\/+$/g, '');
+  const p = config.S3_TENANT_PREFIX.replace(/^\/+|\/+$/g, '');
   return `${p}/${schoolId}`;
 }
 
@@ -75,18 +77,20 @@ export async function signUploadUrl(params: {
   assertAllowedContentType(params.contentType);
   const safe = sanitizeFileBase(params.fileName);
   const objectKey = `${tenantRoot(params.schoolId)}/media/${params.userId}/${randomUUID()}-${safe}`;
-  const storage = await getStorage();
-  const bucket = storage.bucket(config.GCS_MEDIA_BUCKET);
-  const file = bucket.file(objectKey);
-  const ttlMs = config.MEDIA_SIGNED_URL_TTL_SECONDS * 1000;
-  const expires = Date.now() + ttlMs;
 
-  const [uploadUrl] = await file.getSignedUrl({
-    version: 'v4',
-    action: 'write',
-    expires,
-    contentType: params.contentType.trim(),
-  });
+  const ttlSeconds = config.MEDIA_SIGNED_URL_TTL_SECONDS;
+  const expires = Date.now() + ttlSeconds * 1000;
+
+  const s3 = getS3Client();
+  const uploadUrl = await getSignedUrl(
+    s3,
+    new PutObjectCommand({
+      Bucket: config.S3_MEDIA_BUCKET,
+      Key: objectKey,
+      ContentType: params.contentType.trim(),
+    }),
+    { expiresIn: ttlSeconds },
+  );
 
   return {
     objectKey,
@@ -96,18 +100,54 @@ export async function signUploadUrl(params: {
 }
 
 export async function signReadUrl(objectKey: string): Promise<{ readUrl: string; expiresAt: string }> {
-  const storage = await getStorage();
-  const bucket = storage.bucket(config.GCS_MEDIA_BUCKET);
-  const file = bucket.file(objectKey);
-  const ttlMs = config.MEDIA_SIGNED_URL_TTL_SECONDS * 1000;
-  const expires = Date.now() + ttlMs;
-  const [readUrl] = await file.getSignedUrl({
-    version: 'v4',
-    action: 'read',
-    expires,
-  });
+  const ttlSeconds = config.MEDIA_SIGNED_URL_TTL_SECONDS;
+  const expires = Date.now() + ttlSeconds * 1000;
+
+  const s3 = getS3Client();
+  const readUrl = await getSignedUrl(
+    s3,
+    new GetObjectCommand({
+      Bucket: config.S3_MEDIA_BUCKET,
+      Key: objectKey.replace(/^\/+/, ''),
+    }),
+    { expiresIn: ttlSeconds },
+  );
+
   return {
     readUrl,
     expiresAt: new Date(expires).toISOString(),
   };
 }
+
+export async function uploadObjectDirect(params: {
+  schoolId: string;
+  userId: string;
+  fileName: string;
+  contentType: string;
+  bytes: Buffer;
+}): Promise<{ objectKey: string }> {
+  assertAllowedContentType(params.contentType);
+  const safe = sanitizeFileBase(params.fileName);
+  const objectKey = `${tenantRoot(params.schoolId)}/media/${params.userId}/${randomUUID()}-${safe}`;
+
+  const s3 = getS3Client();
+  await s3.send(
+    new PutObjectCommand({
+      Bucket: config.S3_MEDIA_BUCKET,
+      Key: objectKey,
+      Body: params.bytes,
+      ContentType: params.contentType.trim(),
+    }),
+  );
+
+  return { objectKey };
+}
+
+export function publicObjectUrl(objectKey: string): string {
+  const base =
+    config.S3_PUBLIC_BASE_URL.trim() ||
+    `https://${config.S3_MEDIA_BUCKET}.s3.${config.AWS_REGION}.amazonaws.com`;
+  const key = objectKey.replace(/^\/+/, '').split('/').map(encodeURIComponent).join('/');
+  return `${base}/${key}`;
+}
+

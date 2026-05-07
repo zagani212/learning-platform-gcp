@@ -208,18 +208,60 @@ Responses use JSON shape `{ school: { schoolId, name, slug, createdAt } }`.
 
 Responses use **`{ user: { userId, schoolId, userName, email, role, active, createdAt } }`** or **`{ users: [...] }`**.
 
-### `media-service` (JWT required) — tenant media on GCS
+### `media-service` (JWT required) — tenant media on S3
 
-Configure **`GCS_MEDIA_BUCKET`** (and optionally **`GCS_TENANT_PREFIX`**, default `tenants`) in **`microservices/.env`**. The process must run with credentials that can **sign URLs** and **read/write objects** (for example a service account with **Storage Object Admin** on that bucket, or tighter custom roles including `storage.objects.create` / `get` / `signBlob` as required by your org).
+Configure **`AWS_REGION`**, **`S3_MEDIA_BUCKET`** (and optionally **`S3_TENANT_PREFIX`**, default `tenants`) in **`microservices/.env`**. The process must run with AWS credentials (recommended: an instance role / task role) that can **presign** and **read/write objects** in that bucket.
 
-**Signing locally:** Plain **`gcloud auth application-default login`** (user ADC only) cannot sign V4 URLs. Use either **`GOOGLE_APPLICATION_CREDENTIALS`** pointing at a **service account JSON key**, or **impersonation**: set **`GCS_IMPERSONATE_SERVICE_ACCOUNT`** to the target SA email (e.g. `learning-platform-service-account@PROJECT.iam.gserviceaccount.com`) or the short account id plus **`GCP_PROJECT_ID`** / **`GOOGLE_CLOUD_PROJECT`**. Your user must have **Service Account Token Creator** (`roles/iam.serviceAccountTokenCreator`) on that service account. On **Cloud Run** / **GKE**, attach a workload service account and leave impersonation unset.
+**Signing locally:** set `AWS_PROFILE` (recommended) or `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` (and `AWS_REGION`). On AWS, attach an **IAM role** to the compute runtime and avoid static keys.
 
-Object layout: **`{GCS_TENANT_PREFIX}/{school_id}/media/{user_id}/{uuid}-{filename}`** — the JWT claim **`sid`** must match **`school_id`** for upload and read.
+Object layout: **`{S3_TENANT_PREFIX}/{school_id}/media/{user_id}/{uuid}-{filename}`** — the JWT claim **`sid`** must match **`school_id`** for upload and read.
 
 - **`POST /v1/media/signed-upload`** — **`teacher`** or **`teaching_assistant`** only. Body: `{ "fileName", "contentType" }` with an allowed MIME type: common **images** (JPEG, PNG, GIF, WebP), **video** (MP4, WebM, QuickTime), **PDF**, **audio** (MPEG, WAV, WebM, MP4), and **Word/PowerPoint** (legacy and Open XML). Returns **`{ uploadUrl, objectKey, method: "PUT", headers: { "Content-Type": … }, expiresAt }`**. The browser should **`PUT`** the raw file bytes to **`uploadUrl`** with exactly that **`Content-Type`** header.
-- **`POST /v1/media/signed-read`** — any signed-in role in the same tenant (**`student`**, **`teacher`**, **`teaching_assistant`**, **`school_admin`**, **`platform_master`**). Body: `{ "objectKey" }` must start with **`{GCS_TENANT_PREFIX}/{caller sid}/`**. Returns **`{ readUrl, expiresAt }`**.
+- **`POST /v1/media/signed-read`** — any signed-in role in the same tenant (**`student`**, **`teacher`**, **`teaching_assistant`**, **`school_admin`**, **`platform_master`**). Body: `{ "objectKey" }` must start with **`{S3_TENANT_PREFIX}/{caller sid}/`**. Returns **`{ readUrl, expiresAt }`**.
 
-**Bucket CORS (browser uploads):** allow **`PUT`** from your SPA origin (for example `http://localhost:5173`) and the response headers your client needs. Example (adjust origin and `maxAgeSeconds`):
+**Bucket CORS (browser uploads):** allow **`PUT`** from your SPA origin (for example `http://localhost:5173`) and the response headers your client needs. (For S3, configure CORS on the bucket similarly: allow `PUT/GET/HEAD`, allow `Content-Type` header, and expose `ETag` if needed.)
+
+#### S3 bucket CORS (example)
+
+In the S3 bucket CORS configuration (AWS Console → S3 → Bucket → Permissions → CORS), allow your SPA origin(s) and the methods used by presigned URLs:
+
+```json
+[
+  {
+    "AllowedOrigins": ["https://your-domain.example"],
+    "AllowedMethods": ["GET", "PUT", "HEAD"],
+    "AllowedHeaders": ["*"],
+    "ExposeHeaders": ["ETag"],
+    "MaxAgeSeconds": 3600
+  }
+]
+```
+
+#### IAM permissions for `media-service` (EC2 instance role)
+
+Attach an IAM role (instance profile) to the EC2 instance running the containers. The role should be allowed to access only your media bucket (and optionally only the prefix you use).
+
+Example policy (bucket + objects):
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AllowTenantMediaBucketList",
+      "Effect": "Allow",
+      "Action": ["s3:ListBucket"],
+      "Resource": "arn:aws:s3:::your-s3-bucket-name"
+    },
+    {
+      "Sid": "AllowTenantMediaObjectRW",
+      "Effect": "Allow",
+      "Action": ["s3:GetObject", "s3:PutObject"],
+      "Resource": "arn:aws:s3:::your-s3-bucket-name/*"
+    }
+  ]
+}
+```
 
 ```json
 [
@@ -260,3 +302,48 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/
 | `microservices/users-service/` | User directory + profile reads (tenant scoped, role aware) |
 | `microservices/media-service/` | Signed upload/read URLs for tenant-scoped objects in GCS |
 | `microservices/auth-service/sql/` | SQL migrations / reference scripts |
+
+## AWS / EC2 deployment checklist (quick)
+
+1) **Prepare AWS resources**
+- **RDS Postgres** reachable from EC2 security group on `5432`.
+- **S3 bucket** created (CORS configured as above).
+- **EC2 IAM role** attached (permissions as above).
+
+2) **Configure env**
+- Copy `microservices/.env.aws.example` → `microservices/.env` on the EC2 box and set:
+  - `DATABASE_HOST` to the RDS endpoint
+  - `DATABASE_SSL=true`
+  - `JWT_SECRET` to a strong secret (≥ 16 chars)
+  - `AWS_REGION`, `S3_MEDIA_BUCKET`
+  - `CORS_ORIGIN=https://your-domain.example`
+- Copy `web/.env.aws.example` → `.env` (or export the vars) for the frontend build:
+  - `VITE_AUTH_API_URL`, `VITE_SCHOOLS_API_URL`, `VITE_USERS_API_URL`, `VITE_MEDIA_API_URL`
+
+3) **Start the stack**
+
+```bash
+docker compose -f docker-compose.prod.yml up -d --build
+```
+
+4) **Verify health**
+
+```bash
+curl -s http://<EC2_PUBLIC_IP>/api/auth/health | jq .
+curl -s http://<EC2_PUBLIC_IP>/api/schools/health | jq .
+curl -s http://<EC2_PUBLIC_IP>/api/users/health | jq .
+curl -s http://<EC2_PUBLIC_IP>/api/media/health | jq .
+```
+
+5) **Verify DB connectivity**
+
+```bash
+curl -s http://<EC2_PUBLIC_IP>/api/auth/health/db | jq .
+curl -s http://<EC2_PUBLIC_IP>/api/schools/health/db | jq .
+curl -s http://<EC2_PUBLIC_IP>/api/users/health/db | jq .
+```
+
+6) **Verify media (presign + browser PUT)**
+- Login in the SPA, request `POST /api/media/v1/media/signed-upload` (or via UI).
+- Browser `PUT` to the returned `uploadUrl` must succeed (if it fails, check S3 CORS + correct `Content-Type`).
+

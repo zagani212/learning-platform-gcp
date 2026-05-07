@@ -129,7 +129,7 @@ export interface PlatformContextValue {
   /** After a successful PUT to the signed upload URL, persist metadata in the local snapshot. */
   registerCloudAsset: (
     courseId: string,
-    input: { objectKey: string; title: string; fileName: string; kind: AssetKind },
+    input: { objectKey: string; url: string; title: string; fileName: string; kind: AssetKind },
   ) => void;
   addLinkAsset: (courseId: string, title: string, url: string) => void;
   assetsForCourse: (courseId: string) => CourseAsset[];
@@ -234,12 +234,17 @@ export function PlatformProvider({ children }: { children: ReactNode }) {
 
   const coursesICanTeach = useMemo(() => {
     if (!currentUser || !currentSchool) return [];
-    if (currentUser.role !== 'teacher' && currentUser.role !== 'teaching_assistant') {
+    if (
+      currentUser.role !== 'teacher' &&
+      currentUser.role !== 'teaching_assistant' &&
+      currentUser.role !== 'platform_master'
+    ) {
       return [];
     }
-    return snapshot.courses.filter(
-      (c) => c.schoolId === currentSchool.id && c.teacherId === currentUser.id,
-    );
+    if (currentUser.role === 'platform_master') {
+      return snapshot.courses.filter((c) => c.schoolId === currentSchool.id);
+    }
+    return snapshot.courses.filter((c) => c.schoolId === currentSchool.id && c.teacherId === currentUser.id);
   }, [currentUser, currentSchool, snapshot.courses]);
 
   const coursesForStudent = useMemo(() => {
@@ -294,7 +299,12 @@ export function PlatformProvider({ children }: { children: ReactNode }) {
   const createCourse = useCallback(
     (input: { title: string; description: string }) => {
       if (!currentUser || !currentSchool) return;
-      if (currentUser.role !== 'teacher' && currentUser.role !== 'teaching_assistant') return;
+      if (
+        currentUser.role !== 'teacher' &&
+        currentUser.role !== 'teaching_assistant' &&
+        currentUser.role !== 'platform_master'
+      )
+        return;
       const title = input.title.trim();
       if (!title) return;
       const id = crypto.randomUUID();
@@ -320,12 +330,13 @@ export function PlatformProvider({ children }: { children: ReactNode }) {
   const registerCloudAsset = useCallback(
     (
       courseId: string,
-      input: { objectKey: string; title: string; fileName: string; kind: AssetKind },
+      input: { objectKey: string; url: string; title: string; fileName: string; kind: AssetKind },
     ) => {
       if (!currentUser || !currentSchool) return;
       const course = snapshot.courses.find((c) => c.id === courseId);
       if (!course || course.schoolId !== currentSchool.id) return;
       const canEdit =
+        currentUser.role === 'platform_master' ||
         currentUser.role === 'school_admin' ||
         (currentUser.role === 'teacher' && course.teacherId === currentUser.id) ||
         currentUser.role === 'teaching_assistant';
@@ -335,7 +346,7 @@ export function PlatformProvider({ children }: { children: ReactNode }) {
         courseId,
         kind: input.kind,
         title: input.title,
-        url: '',
+        url: input.url,
         gcsObjectKey: input.objectKey,
         fileName: input.fileName,
         createdAt: new Date().toISOString(),
@@ -351,6 +362,7 @@ export function PlatformProvider({ children }: { children: ReactNode }) {
       const course = snapshot.courses.find((c) => c.id === courseId);
       if (!course || course.schoolId !== currentSchool.id) return;
       const canEdit =
+        currentUser.role === 'platform_master' ||
         currentUser.role === 'school_admin' ||
         (currentUser.role === 'teacher' && course.teacherId === currentUser.id) ||
         currentUser.role === 'teaching_assistant';

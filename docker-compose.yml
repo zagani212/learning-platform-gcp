@@ -4,7 +4,7 @@ services:
   auth-service:
     image: node:22-alpine
     working_dir: /app
-    command: sh -c "npm ci && npm run dev"
+    command: sh -c "npm ci --include=dev && npm run dev"
     env_file:
       - ./microservices/.env
     environment:
@@ -19,7 +19,7 @@ services:
   users-service:
     image: node:22-alpine
     working_dir: /app
-    command: sh -c "npm ci && npm run dev"
+    command: sh -c "npm ci --include=dev && npm run dev"
     env_file:
       - ./microservices/.env
     environment:
@@ -34,7 +34,7 @@ services:
   schools-service:
     image: node:22-alpine
     working_dir: /app
-    command: sh -c "npm ci && npm run dev"
+    command: sh -c "npm ci --include=dev && npm run dev"
     env_file:
       - ./microservices/.env
     environment:
@@ -53,7 +53,7 @@ services:
   media-service:
     image: node:22-alpine
     working_dir: /app
-    command: sh -c "npm ci && npm run dev"
+    command: sh -c "npm install --include=dev && npm run dev"
     env_file:
       - ./microservices/.env
     environment:
@@ -64,11 +64,14 @@ services:
     volumes:
       - ./microservices/media-service:/app
       - media_service_node_modules:/app/node_modules
+      # Mount AWS credentials/config (from WSL) for S3 presigning.
+      # Put creds here with `aws configure` (inside WSL), or mount a different path if needed.
+      - //wsl.localhost/Ubuntu/home/abdelhak_unix/.aws:/root/.aws:ro
 
   web:
     image: node:22-alpine
     working_dir: /app
-    command: sh -c "npm ci && npm run dev -- --host 0.0.0.0 --port 5173"
+    command: sh -c "npm ci --include=dev && npm run dev -- --host 0.0.0.0 --port 5173"
     ports:
       - "5173:5173"
     volumes:

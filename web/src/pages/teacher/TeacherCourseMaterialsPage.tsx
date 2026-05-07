@@ -7,7 +7,7 @@ import {
   getMediaApiBase,
   isCloudUploadableContentType,
   openCourseAssetInNewTab,
-  requestSignedUpload,
+  uploadDirect,
 } from '../../lib/mediaApi';
 import { usePlatform } from '../../state/PlatformContext';
 
@@ -77,13 +77,13 @@ export function TeacherCourseMaterialsPage() {
       <Card>
         <h2 className="font-display text-lg font-semibold text-ink-900">Upload files</h2>
         <p className="mt-2 text-sm text-ink-600">
-          Files are stored in your Google Cloud Storage bucket (per-tenant prefix). The browser uploads with a
-          signed URL from <code className="text-xs">media-service</code>; opening a file uses a short-lived read URL.
+          Files are stored in your S3 bucket (per-tenant prefix). The browser uploads with a signed URL from{' '}
+          <code className="text-xs">media-service</code>; opening a file uses a short-lived read URL.
         </p>
         {!mediaApiConfigured && (
           <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-950">
             Set <code className="text-xs">VITE_MEDIA_API_URL</code> in <code className="text-xs">web/.env</code> and
-            run <code className="text-xs">media-service</code> with <code className="text-xs">GCS_MEDIA_BUCKET</code>{' '}
+            run <code className="text-xs">media-service</code> with <code className="text-xs">S3_MEDIA_BUCKET</code>{' '}
             configured in <code className="text-xs">microservices/.env</code>.
           </p>
         )}
@@ -115,32 +115,21 @@ export function TeacherCourseMaterialsPage() {
             }
             setUploadBusy(true);
             try {
-              const up = await requestSignedUpload(auth, {
-                fileName: file.name,
-                contentType: file.type,
-              });
+              const up = await uploadDirect(auth, file);
               if (!up.ok) {
                 setUploadErr(
                   up.status === 403
-                    ? 'Only teachers and teaching assistants can upload.'
+                    ? 'Only staff can upload (teacher, teaching assistant, or platform master).'
                     : up.status === 400
                       ? 'This file type is not allowed by the server.'
-                      : `Could not get upload URL (${up.error}).`,
+                      : `Upload failed (${up.error}).`,
                 );
-                return;
-              }
-              const put = await fetch(up.data.uploadUrl, {
-                method: 'PUT',
-                headers: { 'Content-Type': up.data.headers['Content-Type'] },
-                body: file,
-              });
-              if (!put.ok) {
-                setUploadErr(`Upload failed (${put.status}). Check bucket CORS and credentials.`);
                 return;
               }
               const title = file.name.replace(/\.[^.]+$/, '') || file.name;
               registerCloudAsset(course.id, {
                 objectKey: up.data.objectKey,
+                url: up.data.url,
                 title,
                 fileName: file.name,
                 kind: guessAssetKindFromFile(file),
