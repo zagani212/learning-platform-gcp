@@ -1,0 +1,93 @@
+name: learning-platform
+
+services:
+  auth-service:
+    image: node:22-alpine
+    working_dir: /app
+    command: sh -c "npm ci && npm run dev"
+    env_file:
+      - ./microservices/.env
+    environment:
+      AUTH_SERVICE_PORT: "8080"
+      PORT: "8080"
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./microservices/auth-service:/app
+      - auth_service_node_modules:/app/node_modules
+
+  users-service:
+    image: node:22-alpine
+    working_dir: /app
+    command: sh -c "npm ci && npm run dev"
+    env_file:
+      - ./microservices/.env
+    environment:
+      USERS_SERVICE_PORT: "8082"
+      PORT: "8082"
+    ports:
+      - "8082:8082"
+    volumes:
+      - ./microservices/users-service:/app
+      - users_service_node_modules:/app/node_modules
+
+  schools-service:
+    image: node:22-alpine
+    working_dir: /app
+    command: sh -c "npm ci && npm run dev"
+    env_file:
+      - ./microservices/.env
+    environment:
+      SCHOOLS_SERVICE_PORT: "8081"
+      PORT: "8081"
+      USERS_SERVICE_INTERNAL_URL: http://users-service:8082
+    depends_on:
+      users-service:
+        condition: service_started
+    ports:
+      - "8081:8081"
+    volumes:
+      - ./microservices/schools-service:/app
+      - schools_service_node_modules:/app/node_modules
+
+  media-service:
+    image: node:22-alpine
+    working_dir: /app
+    command: sh -c "npm ci && npm run dev"
+    env_file:
+      - ./microservices/.env
+    environment:
+      MEDIA_SERVICE_PORT: "8083"
+      PORT: "8083"
+    ports:
+      - "8083:8083"
+    volumes:
+      - ./microservices/media-service:/app
+      - media_service_node_modules:/app/node_modules
+
+  web:
+    image: node:22-alpine
+    working_dir: /app
+    command: sh -c "npm ci && npm run dev -- --host 0.0.0.0 --port 5173"
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./web:/app
+      - web_node_modules:/app/node_modules
+    depends_on:
+      auth-service:
+        condition: service_started
+      schools-service:
+        condition: service_started
+      users-service:
+        condition: service_started
+      media-service:
+        condition: service_started
+
+volumes:
+  auth_service_node_modules:
+  users_service_node_modules:
+  schools_service_node_modules:
+  media_service_node_modules:
+  web_node_modules:
+
