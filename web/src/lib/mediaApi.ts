@@ -121,12 +121,26 @@ export async function requestSignedRead(
   return { ok: true, readUrl: data.readUrl };
 }
 
-/** Opens a local object URL / external link, or fetches a short-lived read URL for GCS-backed materials. */
+/** Opens a link or fetches a short-lived signed read URL for S3-backed materials. */
 export async function openCourseAssetInNewTab(
   asset: Pick<CourseAsset, 'url' | 'gcsObjectKey'>,
   getAuthorizationHeader: () => Record<string, string> | undefined,
 ): Promise<{ ok: true } | { ok: false; message: string }> {
-  if (!asset.url) return { ok: false, message: 'Missing file URL.' };
-  window.open(asset.url, '_blank', 'noopener,noreferrer');
+  // Links can be opened directly.
+  if (!asset.gcsObjectKey) {
+    if (!asset.url) return { ok: false, message: 'Missing file URL.' };
+    window.open(asset.url, '_blank', 'noopener,noreferrer');
+    return { ok: true };
+  }
+
+  // For files, always request a fresh signed URL so expired URLs are automatically renewed.
+  const h = getAuthorizationHeader();
+  if (!h) return { ok: false, message: 'You need to be signed in to open this file.' };
+  const r = await requestSignedRead(h, asset.gcsObjectKey);
+  if (!r.ok) {
+    const msg = r.status === 403 ? 'You are not allowed to open this file.' : `Could not open file (${r.error}).`;
+    return { ok: false, message: msg };
+  }
+  window.open(r.readUrl, '_blank', 'noopener,noreferrer');
   return { ok: true };
 }
