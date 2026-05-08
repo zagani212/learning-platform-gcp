@@ -1,5 +1,12 @@
 import { randomUUID } from 'node:crypto';
-import { GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
+import type { Readable } from 'node:stream';
+import {
+  DeleteObjectCommand,
+  GetObjectCommand,
+  HeadObjectCommand,
+  PutObjectCommand,
+} from '@aws-sdk/client-s3';
+import { Upload } from '@aws-sdk/lib-storage';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { config } from '../config.js';
 import { getS3Client } from './s3Client.js';
@@ -143,11 +150,66 @@ export async function uploadObjectDirect(params: {
   return { objectKey };
 }
 
+export async function uploadObjectStream(params: {
+  schoolId: string;
+  userId: string;
+  fileName: string;
+  contentType: string;
+  stream: Readable;
+}): Promise<{ objectKey: string }> {
+  assertAllowedContentType(params.contentType);
+  const safe = sanitizeFileBase(params.fileName);
+  const objectKey = `${tenantRoot(params.schoolId)}/media/${params.userId}/${randomUUID()}-${safe}`;
+
+  const s3 = getS3Client();
+  const up = new Upload({
+    client: s3,
+    params: {
+      Bucket: config.S3_MEDIA_BUCKET,
+      Key: objectKey,
+      Body: params.stream,
+      ContentType: params.contentType.trim(),
+    },
+    queueSize: 4,
+    partSize: 10 * 1024 * 1024,
+    leavePartsOnError: false,
+  });
+  await up.done();
+  return { objectKey };
+}
+
 export function publicObjectUrl(objectKey: string): string {
   const base =
     config.S3_PUBLIC_BASE_URL.trim() ||
     `https://${config.S3_MEDIA_BUCKET}.s3.${config.AWS_REGION}.amazonaws.com`;
   const key = objectKey.replace(/^\/+/, '').split('/').map(encodeURIComponent).join('/');
   return `${base}/${key}`;
+}
+
+export async function deleteObject(objectKey: string): Promise<void> {
+  const s3 = getS3Client();
+  await s3.send(
+    new DeleteObjectCommand({
+      Bucket: config.S3_MEDIA_BUCKET,
+      Key: objectKey.replace(/^\/+/, ''),
+    }),
+  );
+}
+
+export async function objectExists(objectKey: string): Promise<boolean> {
+  const s3 = getS3Client();
+  try {
+    await s3.send(
+      new HeadObjectCommand({
+        Bucket: config.S3_MEDIA_BUCKET,
+        Key: objectKey.replace(/^\/+/, ''),
+      }),
+    );
+    return true;
+  } catch (e: unknown) {
+    const err = e as { name?: string; $metadata?: { httpStatusCode?: number } };
+    if (err?.name === 'NotFound' || err?.$metadata?.httpStatusCode === 404) return false;
+    throw e;
+  }
 }
 

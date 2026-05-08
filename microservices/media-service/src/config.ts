@@ -47,6 +47,9 @@ const envSchema = z.object({
 
   MEDIA_SIGNED_URL_TTL_SECONDS: z.coerce.number().int().positive().max(24 * 3600).default(3600),
 
+  /** Max file size accepted by `POST /v1/media/upload`. */
+  MEDIA_MAX_UPLOAD_MB: z.coerce.number().int().positive().max(1024).default(200),
+
   CORS_ORIGIN: z.string().default('*'),
 });
 

@@ -1,17 +1,24 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Button } from '../../components/Button';
 import { Card } from '../../components/Card';
 import type { CourseAsset } from '../../domain/types';
-import { openCourseAssetInNewTab } from '../../lib/mediaApi';
+import { resolveCourseAssetUrl } from '../../lib/mediaApi';
 import { usePlatform } from '../../state/PlatformContext';
 
 export function StudentFollowingPage() {
   const { coursesForStudent, myEnrollments, unenroll, snapshot } = usePlatform();
+  const { getAuthorizationHeader } = usePlatform();
   const byId = new Map(coursesForStudent.map((c) => [c.id, c]));
   const following = myEnrollments
     .map((e) => byId.get(e.courseId))
     .filter((c): c is NonNullable<typeof c> => Boolean(c));
+
+  const [activeAssetId, setActiveAssetId] = useState<string | null>(null);
+  const [activeUrl, setActiveUrl] = useState<string | null>(null);
+  const [activeKind, setActiveKind] = useState<string | null>(null);
+  const [activeTitle, setActiveTitle] = useState<string>('');
+  const [viewerBusy, setViewerBusy] = useState(false);
+  const [viewerErr, setViewerErr] = useState<string | null>(null);
 
   return (
     <div className="mx-auto max-w-4xl space-y-8">
@@ -48,10 +55,81 @@ export function StudentFollowingPage() {
                           <p className="text-sm font-medium text-ink-900">{a.title}</p>
                           <p className="text-xs capitalize text-ink-500">{a.kind}</p>
                         </div>
-                        <AssetOpenButton asset={a} />
+                        <button
+                          type="button"
+                          className="text-sm font-medium text-accent-dark hover:underline"
+                          onClick={async () => {
+                            setViewerErr(null);
+                            setViewerBusy(true);
+                            setActiveAssetId(a.id);
+                            setActiveKind(a.kind);
+                            setActiveTitle(a.title);
+                            try {
+                              const r = await resolveCourseAssetUrl(a, getAuthorizationHeader);
+                              if (!r.ok) {
+                                setViewerErr(r.message);
+                                return;
+                              }
+                              setActiveUrl(r.url);
+                            } finally {
+                              setViewerBusy(false);
+                            }
+                          }}
+                        >
+                          Preview
+                        </button>
                       </li>
                     ))}
                   </ul>
+                )}
+
+                {activeUrl && activeKind && (
+                  <div className="mt-6 border-t border-ink-100 pt-4">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div>
+                        <p className="text-sm font-medium text-ink-900">{activeTitle || 'Preview'}</p>
+                        <p className="text-xs capitalize text-ink-500">{activeKind}</p>
+                      </div>
+                      <Button
+                        variant="ghost"
+                        className="shrink-0"
+                        onClick={() => {
+                          setActiveAssetId(null);
+                          setActiveUrl(null);
+                          setActiveKind(null);
+                          setActiveTitle('');
+                          setViewerErr(null);
+                        }}
+                      >
+                        Close
+                      </Button>
+                    </div>
+
+                    {viewerErr && <p className="mt-2 text-sm text-red-700">{viewerErr}</p>}
+                    {viewerBusy && <p className="mt-2 text-sm text-ink-500">Loading preview…</p>}
+
+                    <div className="mt-3 overflow-hidden rounded-lg border border-ink-200 bg-white">
+                      {activeKind === 'image' && (
+                        <img src={activeUrl} alt={activeTitle || 'Image'} className="max-h-[70vh] w-full object-contain" />
+                      )}
+                      {(activeKind === 'pdf' || activeKind === 'document') && (
+                        <iframe title={activeTitle || 'Document'} src={activeUrl} className="h-[70vh] w-full" />
+                      )}
+                      {activeKind === 'video' && <video src={activeUrl} controls className="max-h-[70vh] w-full bg-black" />}
+                      {activeKind === 'audio' && (
+                        <div className="p-4">
+                          <audio src={activeUrl} controls className="w-full" />
+                        </div>
+                      )}
+                      {activeKind === 'link' && (
+                        <div className="p-4">
+                          <a href={activeUrl} target="_blank" rel="noreferrer" className="text-sm font-medium text-accent-dark hover:underline">
+                            Open link
+                          </a>
+                        </div>
+                      )}
+                    </div>
+                  </div>
                 )}
               </Card>
             </li>
@@ -69,44 +147,6 @@ export function StudentFollowingPage() {
           </Card>
         )}
       </ul>
-    </div>
-  );
-}
-
-function AssetOpenButton({ asset }: { asset: CourseAsset }) {
-  const { getAuthorizationHeader } = usePlatform();
-  const [err, setErr] = useState<string | null>(null);
-
-  const label =
-    asset.kind === 'link' ? 'Visit link'
-    : asset.kind === 'video' ? 'Open video'
-    : asset.kind === 'image' ? 'Open image'
-    : asset.kind === 'pdf' || asset.kind === 'document' ? 'Open file'
-    : asset.kind === 'audio' ? 'Open audio'
-    : 'Open';
-
-  if (asset.kind === 'link' && !asset.gcsObjectKey) {
-    return (
-      <a href={asset.url} target="_blank" rel="noreferrer" className="text-sm font-medium text-accent-dark hover:underline">
-        {label}
-      </a>
-    );
-  }
-
-  return (
-    <div className="flex flex-col items-end gap-1">
-      <button
-        type="button"
-        className="text-sm font-medium text-accent-dark hover:underline"
-        onClick={async () => {
-          setErr(null);
-          const r = await openCourseAssetInNewTab(asset, getAuthorizationHeader);
-          if (!r.ok) setErr(r.message);
-        }}
-      >
-        {label}
-      </button>
-      {err && <span className="max-w-[14rem] text-right text-xs text-red-700">{err}</span>}
     </div>
   );
 }

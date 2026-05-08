@@ -45,7 +45,7 @@ export type SignedReadResponse = {
 
 export type DirectUploadResponse = {
   objectKey: string;
-  url: string;
+  url?: string;
 };
 
 export async function uploadDirect(
@@ -68,8 +68,111 @@ export async function uploadDirect(
   if (!res.ok) {
     return { ok: false, status: res.status, error: typeof data.error === 'string' ? data.error : 'request_failed' };
   }
-  if (!data.objectKey || !data.url) return { ok: false, status: 502, error: 'malformed_response' };
+  if (!data.objectKey) return { ok: false, status: 502, error: 'malformed_response' };
   return { ok: true, data: { objectKey: data.objectKey, url: data.url } };
+}
+
+export function uploadDirectWithProgress(params: {
+  auth: Record<string, string>;
+  file: File;
+  onProgress: (p: { loaded: number; total?: number; percent?: number }) => void;
+}): Promise<{ ok: true; data: DirectUploadResponse } | { ok: false; status: number; error: string }> {
+  const base = getMediaApiBase();
+  if (!base) return Promise.resolve({ ok: false, status: 0, error: 'media_api_not_configured' });
+
+  const form = new FormData();
+  form.append('file', params.file, params.file.name);
+
+  return new Promise((resolve) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', `${base}/v1/media/upload`);
+    for (const [k, v] of Object.entries(params.auth)) xhr.setRequestHeader(k, v);
+
+    xhr.upload.onprogress = (e) => {
+      const total = e.lengthComputable ? e.total : undefined;
+      const percent = total ? Math.round((e.loaded / total) * 100) : undefined;
+      params.onProgress({ loaded: e.loaded, total, percent });
+    };
+
+    xhr.onerror = () => resolve({ ok: false, status: 0, error: 'network_error' });
+    xhr.onabort = () => resolve({ ok: false, status: 0, error: 'aborted' });
+
+    xhr.onload = () => {
+      const status = xhr.status || 0;
+      const raw = xhr.responseText || '';
+      const parsed = (() => {
+        try {
+          return JSON.parse(raw) as unknown;
+        } catch {
+          return {};
+        }
+      })();
+
+      if (status < 200 || status >= 300) {
+        const o = parsed as { error?: unknown };
+        resolve({
+          ok: false,
+          status,
+          error: typeof o.error === 'string' ? o.error : 'request_failed',
+        });
+        return;
+      }
+
+      const o = parsed as Partial<DirectUploadResponse>;
+      if (!o.objectKey) {
+        resolve({ ok: false, status: 502, error: 'malformed_response' });
+        return;
+      }
+      resolve({ ok: true, data: { objectKey: o.objectKey, url: o.url } });
+    };
+
+    xhr.send(form);
+  });
+}
+
+export function putWithProgress(params: {
+  url: string;
+  contentType: string;
+  body: Blob;
+  onProgress: (p: { loaded: number; total?: number; percent?: number }) => void;
+}): Promise<{ ok: true } | { ok: false; status: number; error: string }> {
+  return new Promise((resolve) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('PUT', params.url);
+    xhr.setRequestHeader('Content-Type', params.contentType);
+
+    xhr.upload.onprogress = (e) => {
+      const total = e.lengthComputable ? e.total : undefined;
+      const percent = total ? Math.round((e.loaded / total) * 100) : undefined;
+      params.onProgress({ loaded: e.loaded, total, percent });
+    };
+
+    xhr.onerror = () => resolve({ ok: false, status: 0, error: 'network_error' });
+    xhr.onabort = () => resolve({ ok: false, status: 0, error: 'aborted' });
+    xhr.onload = () => {
+      const status = xhr.status || 0;
+      if (status >= 200 && status < 300) resolve({ ok: true });
+      else resolve({ ok: false, status, error: 'upload_failed' });
+    };
+
+    xhr.send(params.body);
+  });
+}
+
+export async function deleteMediaObject(
+  auth: Record<string, string>,
+  objectKey: string,
+): Promise<{ ok: true } | { ok: false; status: number; error: string }> {
+  const base = getMediaApiBase();
+  if (!base) return { ok: false, status: 0, error: 'media_api_not_configured' };
+  const res = await fetch(`${base}/v1/media/object`, {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json', ...auth },
+    body: JSON.stringify({ objectKey }),
+  });
+  if (res.status === 204) return { ok: true };
+  const data = (await res.json().catch(() => ({}))) as { error?: string };
+  return { ok: false, status: res.status, error: typeof data.error === 'string' ? data.error : 'request_failed' };
 }
 
 export async function requestSignedUpload(
@@ -102,6 +205,80 @@ export async function requestSignedUpload(
   };
 }
 
+export type UploadJobCreateResponse = SignedUploadResponse & { jobId: string };
+
+export async function createUploadJob(
+  auth: Record<string, string>,
+  body: { fileName: string; contentType: string },
+): Promise<{ ok: true; data: UploadJobCreateResponse } | { ok: false; status: number; error: string }> {
+  const base = getMediaApiBase();
+  if (!base) return { ok: false, status: 0, error: 'media_api_not_configured' };
+  const res = await fetch(`${base}/v1/media/upload-jobs`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...auth },
+    body: JSON.stringify(body),
+  });
+  const data = (await res.json().catch(() => ({}))) as { error?: string } & Partial<UploadJobCreateResponse>;
+  if (!res.ok) {
+    return { ok: false, status: res.status, error: typeof data.error === 'string' ? data.error : 'request_failed' };
+  }
+  if (!data.jobId || !data.uploadUrl || !data.objectKey || !data.headers?.['Content-Type']) {
+    return { ok: false, status: 502, error: 'malformed_response' };
+  }
+  return {
+    ok: true,
+    data: {
+      jobId: data.jobId,
+      uploadUrl: data.uploadUrl,
+      objectKey: data.objectKey,
+      method: data.method ?? 'PUT',
+      headers: { 'Content-Type': data.headers['Content-Type'] },
+      expiresAt: data.expiresAt ?? '',
+    },
+  };
+}
+
+export async function completeUploadJob(
+  auth: Record<string, string>,
+  jobId: string,
+): Promise<{ ok: true } | { ok: false; status: number; error: string }> {
+  const base = getMediaApiBase();
+  if (!base) return { ok: false, status: 0, error: 'media_api_not_configured' };
+  const res = await fetch(`${base}/v1/media/upload-jobs/${encodeURIComponent(jobId)}/complete`, {
+    method: 'POST',
+    headers: { ...auth },
+  });
+  if (res.status === 202) return { ok: true };
+  const data = (await res.json().catch(() => ({}))) as { error?: string };
+  return { ok: false, status: res.status, error: typeof data.error === 'string' ? data.error : 'request_failed' };
+}
+
+export type UploadJobStatus = {
+  jobId: string;
+  objectKey: string;
+  status: 'created' | 'uploading' | 'uploaded' | 'failed';
+  updatedAt: number;
+  error?: string;
+};
+
+export async function getUploadJob(
+  auth: Record<string, string>,
+  jobId: string,
+): Promise<{ ok: true; job: UploadJobStatus } | { ok: false; status: number; error: string }> {
+  const base = getMediaApiBase();
+  if (!base) return { ok: false, status: 0, error: 'media_api_not_configured' };
+  const res = await fetch(`${base}/v1/media/upload-jobs/${encodeURIComponent(jobId)}`, {
+    method: 'GET',
+    headers: { ...auth },
+  });
+  const data = (await res.json().catch(() => ({}))) as { error?: string; job?: UploadJobStatus };
+  if (!res.ok) {
+    return { ok: false, status: res.status, error: typeof data.error === 'string' ? data.error : 'request_failed' };
+  }
+  if (!data.job?.jobId) return { ok: false, status: 502, error: 'malformed_response' };
+  return { ok: true, job: data.job };
+}
+
 export async function requestSignedRead(
   auth: Record<string, string>,
   objectKey: string,
@@ -121,16 +298,15 @@ export async function requestSignedRead(
   return { ok: true, readUrl: data.readUrl };
 }
 
-/** Opens a link or fetches a short-lived signed read URL for S3-backed materials. */
-export async function openCourseAssetInNewTab(
+/** Resolves a URL for viewing an asset (renews signed URLs). */
+export async function resolveCourseAssetUrl(
   asset: Pick<CourseAsset, 'url' | 'gcsObjectKey'>,
   getAuthorizationHeader: () => Record<string, string> | undefined,
-): Promise<{ ok: true } | { ok: false; message: string }> {
+): Promise<{ ok: true; url: string } | { ok: false; message: string }> {
   // Links can be opened directly.
   if (!asset.gcsObjectKey) {
     if (!asset.url) return { ok: false, message: 'Missing file URL.' };
-    window.open(asset.url, '_blank', 'noopener,noreferrer');
-    return { ok: true };
+    return { ok: true, url: asset.url };
   }
 
   // For files, always request a fresh signed URL so expired URLs are automatically renewed.
@@ -141,6 +317,5 @@ export async function openCourseAssetInNewTab(
     const msg = r.status === 403 ? 'You are not allowed to open this file.' : `Could not open file (${r.error}).`;
     return { ok: false, message: msg };
   }
-  window.open(r.readUrl, '_blank', 'noopener,noreferrer');
-  return { ok: true };
+  return { ok: true, url: r.readUrl };
 }

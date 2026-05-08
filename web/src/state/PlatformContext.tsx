@@ -132,6 +132,7 @@ export interface PlatformContextValue {
     input: { objectKey: string; url: string; title: string; fileName: string; kind: AssetKind },
   ) => void;
   addLinkAsset: (courseId: string, title: string, url: string) => void;
+  deleteAsset: (assetId: string) => void;
   assetsForCourse: (courseId: string) => CourseAsset[];
 }
 
@@ -389,6 +390,26 @@ export function PlatformProvider({ children }: { children: ReactNode }) {
     [snapshot.assets],
   );
 
+  const deleteAsset = useCallback(
+    (assetId: string) => {
+      if (!currentUser || !currentSchool) return;
+      const asset = snapshot.assets.find((a) => a.id === assetId);
+      if (!asset) return;
+      const course = snapshot.courses.find((c) => c.id === asset.courseId);
+      if (!course || course.schoolId !== currentSchool.id) return;
+
+      const canEdit =
+        currentUser.role === 'platform_master' ||
+        currentUser.role === 'school_admin' ||
+        (currentUser.role === 'teacher' && course.teacherId === currentUser.id) ||
+        currentUser.role === 'teaching_assistant';
+      if (!canEdit) return;
+
+      update((prev) => ({ ...prev, assets: prev.assets.filter((a) => a.id !== assetId) }));
+    },
+    [currentUser, currentSchool, snapshot.assets, snapshot.courses, update],
+  );
+
   const value = useMemo<PlatformContextValue>(
     () => ({
       snapshot,
@@ -410,6 +431,7 @@ export function PlatformProvider({ children }: { children: ReactNode }) {
       createCourse,
       registerCloudAsset,
       addLinkAsset,
+      deleteAsset,
       assetsForCourse,
     }),
     [
@@ -431,6 +453,7 @@ export function PlatformProvider({ children }: { children: ReactNode }) {
       createCourse,
       registerCloudAsset,
       addLinkAsset,
+      deleteAsset,
       assetsForCourse,
     ],
   );
